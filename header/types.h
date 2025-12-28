@@ -16,7 +16,7 @@ struct Frame {
     const uint8_t& at(int x, int y) const {
         return pixels[y * width + x];
     }
-  
+
     static Frame fromMat(const cv::Mat& mat) {
         Frame frame(mat.cols, mat.rows);
 
@@ -27,16 +27,16 @@ struct Frame {
             gray = mat;
         }
 
-        frame.pixels.assign(gray.data, gray.data + gray.total());
+        std::memcpy(frame.pixels.data(), gray.data, frame.width * frame.height);
         return frame;
     }
 
     static cv::Mat toMat(const Frame& frame) {
-        cv::Mat mat(frame.height, frame.width, CV_8UC1, const_cast<std::uint8_t*>(frame.pixels.data()));
-        return mat.clone(); // Return a copy to ensure data integrity
+        return cv::Mat(frame.height, frame.width, CV_8UC1, const_cast<uint8_t*>(frame.pixels.data()));
     }
 };
 
+using Matrix = std::vector<std::vector<float>>;
 struct Edges {};
 struct Lines {};
 struct TrackedState {};
