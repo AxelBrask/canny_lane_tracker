@@ -11,7 +11,7 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
     Frame nms{0,0};
     std::vector<float> gaussian_kernel;
     int gaussian_kernel_size_ = 0;
-    int sigma_ = 1;
+    int sigma_ = 2;
 
     // Predifine mask for lower imgage
     int mask_height = 0;
@@ -39,13 +39,15 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
     void gaussianSmoothing(const Frame& frame, Frame& blur, double sigma) override {
         // Implement Gaussian smoothing
         ensureGaussianKernel(sigma);
-        int y0 = frame.height / 2;
+        int y0 = ImageMask::getMaskStartY(frame.height);
 
 
         //Horizontal pass
         int half_size = gaussian_kernel_size_ / 2;
+        int y_blur_start = std::max(0,y0);
+        int y_tmp_start = std::max(0,y_blur_start-half_size);
 
-        for (int y = y0; y < frame.height; ++y) {
+        for (int y = y_tmp_start; y < frame.height; ++y) {
             for (int x = 0; x < frame.width; ++x) {
                 float sum = 0.0f;
 
@@ -62,7 +64,7 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
 
         // Vertical pass
         half_size = gaussian_kernel_size_ / 2;
-        for (int y = y0; y < frame.height; ++y) {
+        for (int y = y_blur_start; y < frame.height; ++y) {
             for (int x = 0; x < frame.width; ++x) {
                 float sum = 0.0f;
                 
@@ -111,7 +113,7 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
     }
 
     void sobelFilter(const Frame& frame, Frame& mag, Frame& dir) override {
-        int y0 = frame.height/2;
+        int y0 = ImageMask::getMaskStartY(frame.height);
         for (int y = y0; y < frame.height - 1; ++y) {
             for (int x = 1; x < frame.width - 1; ++x) {
                 float gx = 0.0f;
@@ -175,7 +177,14 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
                 } else {
                     nms.at(x, y) = 0;
                 }
+            // Hysterias Thresholding
+            if (mag >= high_threshold_) {
+                nms.at(x, y) = static_cast<uint8_t>(mag);
+            } else if (mag < low_threshold_) {
+                nms.at(x, y) = 0;
             }
+        }
+        
         }
     }
 };

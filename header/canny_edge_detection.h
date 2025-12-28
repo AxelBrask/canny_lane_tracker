@@ -2,6 +2,10 @@
 
 
 struct CannyEdgeDetection {
+
+    double high_threshold_ = 150.0;
+    double low_threshold_ = 100.0;
+
     virtual ~CannyEdgeDetection() = default;
     virtual Frame run(const Frame& frame) = 0;
     virtual void gaussianSmoothing(const Frame& frame, Frame& blur, double sigma) = 0;
