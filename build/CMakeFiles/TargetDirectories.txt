@@ -1,3 +1,0 @@
-/home/axel/Documents/canny_lane_tracker/build/CMakeFiles/canny_lane_tracker.dir
-/home/axel/Documents/canny_lane_tracker/build/CMakeFiles/edit_cache.dir
-/home/axel/Documents/canny_lane_tracker/build/CMakeFiles/rebuild_cache.dir
