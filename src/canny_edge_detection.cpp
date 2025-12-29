@@ -1,6 +1,8 @@
 #include "canny_edge_detection.h"
 
 struct canny_edge_detection_impl : public CannyEdgeDetection {
+
+    CannyEdgeConfig config_;
     // static sobel matrices
     static const Matrix sobel_x;
     static const Matrix sobel_y;
@@ -11,7 +13,6 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
     Frame nms{0,0};
     std::vector<float> gaussian_kernel;
     int gaussian_kernel_size_ = 0;
-    int sigma_ = 2;
 
     // Predifine mask for lower imgage
     int mask_height = 0;
@@ -30,15 +31,15 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
         // Implement Canny edge detection algorithm
         ensureBuffers(frame.width, frame.height);
         mask_height = frame.height;
-        gaussianSmoothing(frame, blur, 0.5);
+        gaussianSmoothing(frame, blur);
         sobelFilter(blur, mag, dir);
         nonMaximumSuppression(mag, dir, nms);
         return nms;
     }
 
-    void gaussianSmoothing(const Frame& frame, Frame& blur, double sigma) override {
+    void gaussianSmoothing(const Frame& frame, Frame& blur) {
         // Implement Gaussian smoothing
-        ensureGaussianKernel(sigma);
+        ensureGaussianKernel();
         int y0 = ImageMask::getMaskStartY(frame.height);
 
 
@@ -77,23 +78,22 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
         }
 
     }
-    int computeKernelSize(double sigma) override {
+    int computeKernelSize(double sigma) {
         int kernel_size = static_cast<int>(std::ceil(3.0 * sigma));
         if (kernel_size % 2 == 0) kernel_size++; // Ensure odd size
         kernel_size= std::clamp(kernel_size, 1, 15);
         return kernel_size;
     }
 
-    void ensureGaussianKernel(double sigma) override {
-        int kernel_size = computeKernelSize(sigma);
-        if (kernel_size != gaussian_kernel_size_ || sigma != sigma_) {
-            gaussian_kernel = gaussianKernel1D(sigma, kernel_size);
+    void ensureGaussianKernel() {
+        int kernel_size = computeKernelSize(config_.sigma);
+        if (kernel_size != gaussian_kernel_size_) {
+            gaussian_kernel = gaussianKernel1D(config_.sigma, kernel_size);
             gaussian_kernel_size_ = kernel_size;
-            sigma_ = sigma;
         }
     }
 
-    std::vector<float> gaussianKernel1D(double sigma, int kernel_size) override {
+    std::vector<float> gaussianKernel1D(double sigma, int kernel_size) {
         std::vector<float> kernel(kernel_size);
         int half_size = kernel_size / 2;
         float sum = 0.0f;
@@ -112,7 +112,7 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
         return kernel;
     }
 
-    void sobelFilter(const Frame& frame, Frame& mag, Frame& dir) override {
+    void sobelFilter(const Frame& frame, Frame& mag, Frame& dir) {
         int y0 = ImageMask::getMaskStartY(frame.height);
         for (int y = y0; y < frame.height - 1; ++y) {
             for (int x = 1; x < frame.width - 1; ++x) {
@@ -143,7 +143,7 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
         }
     }
 
-    void nonMaximumSuppression(const Frame& magnitude, const Frame& direction, Frame& nms) override {
+    void nonMaximumSuppression(const Frame& magnitude, const Frame& direction, Frame& nms) {
         int y0 = magnitude.height / 2;
         for (int y = y0; y < magnitude.height - 1; ++y) {
             for (int x = 1; x < magnitude.width - 1; ++x) {
@@ -178,9 +178,9 @@ struct canny_edge_detection_impl : public CannyEdgeDetection {
                     nms.at(x, y) = 0;
                 }
             // Hysterias Thresholding
-            if (mag >= high_threshold_) {
+            if (mag >= config_.high_threshold) {
                 nms.at(x, y) = static_cast<uint8_t>(mag);
-            } else if (mag < low_threshold_) {
+            } else if (mag < config_.low_threshold) {
                 nms.at(x, y) = 0;
             }
         }
