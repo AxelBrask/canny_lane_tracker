@@ -1,6 +1,22 @@
 #include "hough_transform.h"
 
 struct hough_transform_impl : public HoughTransform {
+    HoughTransformConfig config_;
+    Matrix accumulator;
+    Frame lines{0,0};
+
+
+    std::vector<double> rhos_;
+    std::vector<double> thetas_rad_;
+    std::vector<double> cos_t_;
+    std::vector<double> sin_t_;
+    double rho_min_ = 0.0;
+    size_t rho_bins_ = 0;
+    double cachedMinTheta_ = 1e9;
+    double cachedMaxTheta_ = 1e9;
+    double cachedAngleStep_ = 1e9;
+
+    std::vector<HoughLine> top;
 
     void ensureBuffers(int w, int h) {
         if (lines.width != w || lines.height != h) {
@@ -8,35 +24,35 @@ struct hough_transform_impl : public HoughTransform {
         }
     }
 
-    void precomputeSinCosRho(int width, int height) override{
+    void precomputeSinCosRho(int width, int height) {
         // early exit if already computed for these parameters
-        if (cachedMinTheta_ == minTheta && cachedMaxTheta_ == maxTheta && cachedAngleStep_ == angleStep) {
+        if (cachedMinTheta_ == config_.minTheta && cachedMaxTheta_ == config_.maxTheta && cachedAngleStep_ == config_.angleStep) {
             return;
         }
-        cachedMinTheta_ = minTheta;
-        cachedMaxTheta_ = maxTheta;
-        cachedAngleStep_ = angleStep;
+        cachedMinTheta_ = config_.minTheta;
+        cachedMaxTheta_ = config_.maxTheta;
+        cachedAngleStep_ = config_.angleStep;
 
         thetas_rad_.clear();
         cos_t_.clear();
         sin_t_.clear();
         rhos_.clear();
 
-        for (double theta = minTheta; theta <= maxTheta; theta += angleStep) {
+        for (double theta = config_.minTheta; theta <= config_.maxTheta; theta += config_.angleStep) {
             double rad = theta * CV_PI / 180.0;
             thetas_rad_.push_back(rad);
             cos_t_.push_back(std::cos(rad));
             sin_t_.push_back(std::sin(rad));
         }
         const double diagLen = std::sqrt(width * width + height * height);
-        for (double r = -diagLen; r <= diagLen; r += rho_step_) {
+        for (double r = -diagLen; r <= diagLen; r += config_.rhoStep) {
             rhos_.push_back(r);
         }
         rho_bins_ = rhos_.size();
         rho_min_ = -diagLen;
     }
 
-    void ensureAccumulatorSize(int width, int height) override {
+    void ensureAccumulatorSize(int width, int height) {
 
         precomputeSinCosRho(width, height);
         const size_t R = rho_bins_;
@@ -58,11 +74,11 @@ struct hough_transform_impl : public HoughTransform {
         return lines;
     }
 
-    inline int rhoIndex(double rho) override {
-        return (int)std::lround((rho - rho_min_) / rho_step_);
+    inline int rhoIndex(double rho) {
+        return (int)std::lround((rho - rho_min_) / config_.rhoStep);
     }
 
-    inline void votePixel(int x, int y) override {
+    inline void votePixel(int x, int y) {
         for (size_t theta_idx = 0; theta_idx < thetas_rad_.size(); ++theta_idx) {
             double rho = x * cos_t_[theta_idx] + y * sin_t_[theta_idx];
             // find the closest rho index
@@ -73,9 +89,9 @@ struct hough_transform_impl : public HoughTransform {
         }
     }
 
-    void transformEdges(const Frame& edges, Frame& lines) override {
+    void transformEdges(const Frame& edges, Frame& lines) {
         top.clear();
-        top.resize(HoughTransform::number_of_lines_);
+        top.resize(config_.numberOfLines, HoughLine{0,0,0});
 
         int y0 = ImageMask::getMaskStartY(edges.height);
         for (int y = y0; y < edges.height; ++y) {
@@ -87,7 +103,7 @@ struct hough_transform_impl : public HoughTransform {
         // Get the theta and rho with votes above threshold and draw lines
         for (size_t r = 0; r < accumulator.size(); ++r) {
             for (size_t t = 0; t < accumulator[r].size(); ++t) {
-                if (accumulator[r][t] >= lineThreshold_ && isLocalMaximum(r, t)) {
+                if (accumulator[r][t] >= config_.lineThreshold && isLocalMaximum(r, t)) {
                     float votes = accumulator[r][t];
                     double rho = rhos_[r];
                     double theta = thetas_rad_[t];
@@ -101,12 +117,12 @@ struct hough_transform_impl : public HoughTransform {
         }
     }
     // Check if there are 
-    bool checkLineValidity(size_t r_idx, size_t t_idx) override {
+    bool checkLineValidity(size_t r_idx, size_t t_idx) {
         // Placeholder for line validity check, e.g., based on slope or position
         return true;
     }
 
-    bool isLocalMaximum(size_t r_idx, size_t t_idx) override {
+    bool isLocalMaximum(size_t r_idx, size_t t_idx) {
         float current_value = accumulator[r_idx][t_idx];
         for (int dr = -3; dr <= 3; ++dr) {
             for (int dt = -3; dt <= 3; ++dt) {
@@ -125,7 +141,7 @@ struct hough_transform_impl : public HoughTransform {
         return true;
     }
 
-    void drawLines(Frame& lines, double rho, double theta) override {
+    void drawLines(Frame& lines, double rho, double theta) {
         // set the pixels in lines frame corresponding to the line defined by (rho, theta) to 255
         double a = std::cos(theta), b = std::sin(theta);
         double x0 = a * rho, y0 = b * rho;
@@ -139,7 +155,7 @@ struct hough_transform_impl : public HoughTransform {
         drawLine(lines, x1, y1, x2, y2);
     }
 
-    void drawLine(Frame& frame, int x0, int y0, int x1, int y1) override {
+    void drawLine(Frame& frame, int x0, int y0, int x1, int y1) {
         const int ymin =ImageMask::getMaskStartY(frame.height); 
         cv::Point p0(x0, y0), p1(x1, y1);
 
@@ -164,6 +180,18 @@ struct hough_transform_impl : public HoughTransform {
             if (e2 >= dy) { err += dy; x0 += sx; }
             if (e2 <= dx) { err += dx; y0 += sy; }
         }
+    }
+
+    static void insertTopN(std::vector<HoughLine>& top, float votes, double rho, double theta) {
+        if (votes <= top.back().votes) return;
+        top.back() = HoughLine{votes, rho, theta};
+        std::sort(top.begin(), top.end(), [](const HoughLine& a, const HoughLine& b) {
+            return a.votes > b.votes;
+        });
+    }
+
+    const std::vector<HoughLine>& getDetectedLines() const override {
+        return top;
     }
 };
 std::unique_ptr<HoughTransform> createHoughTransform() {
