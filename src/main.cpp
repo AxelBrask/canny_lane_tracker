@@ -1,6 +1,7 @@
 #include <iostream>
 #include "video_service.h"
 #include "canny_edge_detection.h"
+#include "hough_transform.h"
 #include <memory>
 #include <yaml-cpp/yaml.h>
 #include <opencv2/opencv.hpp>
@@ -8,8 +9,8 @@
 
 class VideoPipeline {
 public:
-    VideoPipeline(std::unique_ptr<VideoService> video_service, std::unique_ptr<CannyEdgeDetection> canny_edge_detector)
-        : video_service_(std::move(video_service)), canny_edge_detector_(std::move(canny_edge_detector)) {}
+    VideoPipeline(std::unique_ptr<VideoService> video_service, std::unique_ptr<CannyEdgeDetection> canny_edge_detector, std::unique_ptr<HoughTransform> hough_transform)
+        : video_service_(std::move(video_service)), canny_edge_detector_(std::move(canny_edge_detector)), hough_transform_(std::move(hough_transform)) {}
 
     void run(const std::string& video_path) {
         if (!video_service_->initialize(video_path)) {
@@ -49,13 +50,38 @@ private:
     void processFrame(const Frame& frame) {
         // Show data
         Frame edges = canny_edge_detector_->run(frame);
-        cv::Mat cv_frame = Frame::toMat(edges);
-        cv::imshow("Canny Edges", cv_frame);
+        Frame lines = hough_transform_->run(edges);
+        cv::Mat orig = Frame::toMat(frame);   // original frame
+        cv::Mat lineImg = Frame::toMat(lines); // grayscale line image (0..255)
+
+        // Ensure orig is 3-channel BGR for colored overlay
+        cv::Mat origBgr;
+        if (orig.channels() == 1) {
+            cv::cvtColor(orig, origBgr, cv::COLOR_GRAY2BGR);
+        } else {
+            origBgr = orig.clone();
+        }
+
+        // Convert line image to BGR and colorize it (optional)
+        cv::Mat linesBgr;
+        cv::cvtColor(lineImg, linesBgr, cv::COLOR_GRAY2BGR);
+
+        cv::Mat mask;
+        cv::threshold(lineImg, mask, 1, 255, cv::THRESH_BINARY);
+        cv::Mat redLines = cv::Mat::zeros(linesBgr.size(), linesBgr.type());
+        redLines.setTo(cv::Scalar(0, 0, 255), mask); // BGR: red where mask is true
+
+        // Blend
+        cv::Mat overlay;
+        cv::addWeighted(origBgr, 1.0, redLines, 1.0, 0.0, overlay);
+
+        cv::imshow("Overlay (Hough lines)", overlay);
         cv::waitKey(1);
     }
 
     std::unique_ptr<VideoService> video_service_;
     std::unique_ptr<CannyEdgeDetection> canny_edge_detector_;
+    std::unique_ptr<HoughTransform> hough_transform_;
 };
 
 
@@ -66,7 +92,8 @@ int main () {
 
     auto video_service = createVideoService();
     auto canny_edge_detector = createCannyEdgeDetection();
-    VideoPipeline pipeline(std::move(video_service), std::move(canny_edge_detector));
+    auto hough_transform = createHoughTransform();
+    VideoPipeline pipeline(std::move(video_service), std::move(canny_edge_detector), std::move(hough_transform));
     pipeline.run(video_path);
     return 0;
 }

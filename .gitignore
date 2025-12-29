@@ -39,9 +39,12 @@
 
 # debug information files
 *.dwo
-<<<<<<< Updated upstream
-=======
 
 #build directory
 build/
->>>>>>> Stashed changes
+
+#vscode stuff
+.vscode/
+
+#perf data
+perf.*

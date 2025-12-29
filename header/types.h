@@ -38,5 +38,21 @@ struct Frame {
 
 using Matrix = std::vector<std::vector<float>>;
 struct Edges {};
-struct Lines {};
+struct HoughLine { 
+    float votes=0;
+    double rho=0;
+    double theta=0;
+};
+
 struct TrackedState {};
+
+class ImageMask {
+public:
+    static bool isInLowerRegion(int x, int y, int width, int height) {
+        return y >= height / 2 - 1;
+    }
+
+    static int getMaskStartY(int height) {
+        return height / 2 - 1;
+    }
+};

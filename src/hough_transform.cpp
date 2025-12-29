@@ -1,9 +1,171 @@
 #include "hough_transform.h"
 
 struct hough_transform_impl : public HoughTransform {
-    Lines run(const Edges& edges) override {
-        // Implement Hough transform algorithm
-        Lines lines;
+
+    void ensureBuffers(int w, int h) {
+        if (lines.width != w || lines.height != h) {
+            lines = Frame(w, h);
+        }
+    }
+
+    void precomputeSinCosRho(int width, int height) override{
+        // early exit if already computed for these parameters
+        if (cachedMinTheta_ == minTheta && cachedMaxTheta_ == maxTheta && cachedAngleStep_ == angleStep) {
+            return;
+        }
+        cachedMinTheta_ = minTheta;
+        cachedMaxTheta_ = maxTheta;
+        cachedAngleStep_ = angleStep;
+
+        thetas_rad_.clear();
+        cos_t_.clear();
+        sin_t_.clear();
+        rhos_.clear();
+
+        for (double theta = minTheta; theta <= maxTheta; theta += angleStep) {
+            double rad = theta * CV_PI / 180.0;
+            thetas_rad_.push_back(rad);
+            cos_t_.push_back(std::cos(rad));
+            sin_t_.push_back(std::sin(rad));
+        }
+        const double diagLen = std::sqrt(width * width + height * height);
+        for (double r = -diagLen; r <= diagLen; r += rho_step_) {
+            rhos_.push_back(r);
+        }
+        rho_bins_ = rhos_.size();
+        rho_min_ = -diagLen;
+    }
+
+    void ensureAccumulatorSize(int width, int height) override {
+
+        precomputeSinCosRho(width, height);
+        const size_t R = rho_bins_;
+        const size_t T = thetas_rad_.size();
+
+        if (accumulator.size() != R || (R > 0 && accumulator[0].size() != T)) {
+            accumulator.assign(R, std::vector<float>(T, 0.0f));
+        } else {
+            for (auto& row : accumulator) std::fill(row.begin(), row.end(), 0.0f);
+        }
+        
+    }
+
+    Frame run(const Frame& edges) override {
+        ensureBuffers(edges.width, edges.height);
+        std::fill(lines.pixels.begin(), lines.pixels.end(), 0);
+        ensureAccumulatorSize(edges.width, edges.height);
+        transformEdges(edges, lines);
         return lines;
     }
+
+    inline int rhoIndex(double rho) override {
+        return (int)std::lround((rho - rho_min_) / rho_step_);
+    }
+
+    inline void votePixel(int x, int y) override {
+        for (size_t theta_idx = 0; theta_idx < thetas_rad_.size(); ++theta_idx) {
+            double rho = x * cos_t_[theta_idx] + y * sin_t_[theta_idx];
+            // find the closest rho index
+            int rho_idx = rhoIndex(rho);
+            if (rho_idx < accumulator.size()) {
+                accumulator[(size_t)rho_idx][theta_idx] += 1.0f;
+            }
+        }
+    }
+
+    void transformEdges(const Frame& edges, Frame& lines) override {
+        top.clear();
+        top.resize(HoughTransform::number_of_lines_);
+
+        int y0 = ImageMask::getMaskStartY(edges.height);
+        for (int y = y0; y < edges.height; ++y) {
+            for (int x = 0; x < edges.width; ++x) {
+                if (edges.at(x, y) == 0) continue;
+                votePixel(x, y);
+            }
+        }
+        // Get the theta and rho with votes above threshold and draw lines
+        for (size_t r = 0; r < accumulator.size(); ++r) {
+            for (size_t t = 0; t < accumulator[r].size(); ++t) {
+                if (accumulator[r][t] >= lineThreshold_ && isLocalMaximum(r, t)) {
+                    float votes = accumulator[r][t];
+                    double rho = rhos_[r];
+                    double theta = thetas_rad_[t];
+                    insertTopN(top, votes, rho, theta);
+                }
+            }
+        }
+        for (const auto& line : top) {
+            if (line.votes <= 0) continue;
+            drawLines(lines, line.rho, line.theta);
+        }
+    }
+    // Check if there are 
+    bool checkLineValidity(size_t r_idx, size_t t_idx) override {
+        // Placeholder for line validity check, e.g., based on slope or position
+        return true;
+    }
+
+    bool isLocalMaximum(size_t r_idx, size_t t_idx) override {
+        float current_value = accumulator[r_idx][t_idx];
+        for (int dr = -3; dr <= 3; ++dr) {
+            for (int dt = -3; dt <= 3; ++dt) {
+                if (dr == 0 && dt == 0) continue;
+                size_t neighbor_r = r_idx + dr;
+                size_t neighbor_t = t_idx + dt;
+                if (neighbor_r < 0 || neighbor_r >= accumulator.size() ||
+                    neighbor_t < 0 || neighbor_t >= accumulator[0].size()) {
+                    continue;
+                }
+                if (accumulator[neighbor_r][neighbor_t] >= current_value) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    void drawLines(Frame& lines, double rho, double theta) override {
+        // set the pixels in lines frame corresponding to the line defined by (rho, theta) to 255
+        double a = std::cos(theta), b = std::sin(theta);
+        double x0 = a * rho, y0 = b * rho;
+        int L = std::max(lines.width, lines.height);
+        int x1 = static_cast<int>(x0 + L * (-b));
+        int y1 = static_cast<int>(y0 + L * (a));
+        int x2 = static_cast<int>(x0 - L * (-b));
+        int y2 = static_cast<int>(y0 - L * (a));
+
+        // Draw the line on the lines frame
+        drawLine(lines, x1, y1, x2, y2);
+    }
+
+    void drawLine(Frame& frame, int x0, int y0, int x1, int y1) override {
+        const int ymin =ImageMask::getMaskStartY(frame.height); 
+        cv::Point p0(x0, y0), p1(x1, y1);
+
+        // Clip to image bounds; if no intersection, nothing to draw
+        if (!cv::clipLine(cv::Size(frame.width, frame.height), p0, p1)) {
+            return;
+        }
+        x0 = p0.x; y0 = p0.y;
+        x1 = p1.x; y1 = p1.y;
+
+        int dx = std::abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+        int dy = -std::abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+        int err = dx + dy, e2;
+
+        while(true)
+        {
+            if (y0 >= ymin ) {
+                frame.at(x0, y0) = 255;
+            }
+            if (x0 == x1 && y0 == y1) break;
+            e2 = 2 * err;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
+        }
+    }
 };
+std::unique_ptr<HoughTransform> createHoughTransform() {
+    return std::make_unique<hough_transform_impl>();
+}
